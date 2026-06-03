@@ -13,7 +13,7 @@
 
 
 ---
-
+ 
 ## Overview
 
 A two-tier **medallion data warehouse** with **edge-to-core streaming ingestion** at the source side and **distributed batch transformation** at the analytical side.
