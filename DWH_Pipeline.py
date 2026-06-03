@@ -17,7 +17,7 @@ MYSQL_HOST      = os.getenv("MYSQL_HOST")
 MYSQL_URL       = os.getenv("MYSQL_URL")
 
 
-spark = SparkSession.builder.appName("Gov_Pipeline") \
+spark = SparkSession.builder.appName("DWH_Pipeline") \
     .config("spark.jars", "/home/yazan/mysql-connector-j-9.5.0.jar") \
     .config("spark.jars.packages",
             "org.apache.hadoop:hadoop-aws:3.4.1,") \
@@ -32,3 +32,60 @@ spark = SparkSession.builder.appName("Gov_Pipeline") \
     .config("spark.hadoop.fs.s3a.buffer.dir", "/tmp/s3a") \
     .getOrCreate()
 
+
+
+
+
+
+def read_table(table, partition_col, partitions_num):
+    """
+    Not Specifying Partitions will read the entire Table into one partition
+    hence all the data is loaded into ram at once when invoking a job;
+    which might crash.
+    """
+    bound = spark.read \
+        .format("jdbc") \
+        .option("driver", "com.mysql.cj.jdbc.Driver") \
+        .option("url", MYSQL_URL) \
+        .option("fetchsize", "5000") \
+        .option("dbtable", f"""(SELECT min({partition_col}) low_bound ,
+                                max({partition_col}) as up_bound
+                        FROM datasource.{table}) as tbl""") \
+        .option("user", MYSQL_USER) \
+        .option("password", MYSQL_PASSWORD) \
+        .load().collect()[0]
+
+    if bound[0] is None or bound[1] is None:
+        raise ValueError(f"Table '{table}' appears to be empty — "
+                         f"MIN/MAX on '{partition_col}' returned NULL. "
+                         f"Aborting to avoid a full-scan read.")
+
+    df = spark.read \
+        .format("jdbc") \
+        .option("driver", "com.mysql.cj.jdbc.Driver") \
+        .option("url", MYSQL_URL) \
+        .option("dbtable", table) \
+        .option("user", MYSQL_USER) \
+        .option("password", MYSQL_PASSWORD) \
+        .option("partitionColumn", partition_col) \
+        .option("lowerBound", bound[0]) \
+        .option("upperBound", bound[1]) \
+        .option("numPartitions", partitions_num) \
+        .option("fetchsize", "5000") \
+        .load()
+    return df
+
+
+
+def write_objects(destination, bucket, entity, df, table):
+    date = datetime.now()
+    timestamp = date.strftime("%Y%m%d_%H%M%S")
+    path = f"s3a://{bucket}/{entity}/{table}/{date.year}/{date.month}/{date.day}"
+
+    if destination.lower() == 'staging':
+        df.write.parquet(f"{path}/{table}_{timestamp}")
+    elif destination.lower() == 'dwh':
+        df.writeTo(f"iceberg.{entity}.{table}.`{date.year}`.`{date.month}`.`{date.day}`").createOrReplace()
+    else:
+        raise ValueError(f"Unknown destination '{destination}'. Expected 'staging' or 'dwh'.")
+    return df
