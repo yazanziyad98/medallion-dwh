@@ -128,10 +128,10 @@ individual_info_df = individual_information \
 insured_info_df = individual_info_df \
     .withColumn("National_Number", safe_long("National_Number"))
 
-salaries_df = wages \
+wages_df = wages \
     .withColumn("National_Number", safe_long("National_Number"))
 
-insured_yearly_salary_df = insured_wage \
+insured_wage_df = insured_wage \
     .withColumn("Social_Security_Number", safe_long("Social_Security_Number"))
 
 insured_transaction_df = insured_transaction \
@@ -140,4 +140,22 @@ insured_transaction_df = insured_transaction \
 
 
 
-Individual_info_stg     = write_objects('staging', bucket='gov.data', entity='cspd', df=individual_info_df,  table="individual_info")
+Individual_info_stg     = write_objects('staging', bucket='gov.data', entity='insurance', df=individual_info_df,  table="individual_info")
+insured_info_stg          = write_objects('staging', bucket='gov.data', entity='insurance',  df=insured_info_df,          table="insured_info")
+wages_stg              = write_objects('staging', bucket='gov.data', entity='wages',  df=wages_df,              table="wages")
+insured_wage_stg        = write_objects('staging', bucket='gov.data', entity='wages',  df=insured_wage_df, table="insured_wage")
+insured_transaction_stg   = write_objects('staging', bucket='gov.data', entity='wages',  df=insured_transaction_df,   table="insured_transaction")
+
+
+
+wages_stg_nat  = natNumber_filter(wages_stg)
+insured_info_nat  = natNumber_filter(insured_info_stg)
+
+
+Individual_info_stg.createOrReplaceTempView('Individual_info_stg')
+
+personal_info_dip = spark.sql("""
+    SELECT *,
+           CASE WHEN Passport_Number LIKE '0000%' THEN 1 ELSE 0 END AS IS_Diplomat
+    FROM Individual_info_stg
+""")
