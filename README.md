@@ -51,11 +51,11 @@ Sample dataset: **~14.4 million rows** across five tables. Real production scale
 
 ## Why this project exists
 
-The legacy stack was **SQL Server + SSIS**. It worked for years, but as the need evolved past nightly batch reporting, four specific limitations dominated:
+The legacy stack **SQL Server + SSIS** worked for years, but as the need evolved past nightly batch reporting, four specific limitations dominated:
 
 1. **One speed, one machine.** SSIS executed packages at a fixed throughput ceiling with no horizontal scaling path. You could tune buffer sizes and upgrade the host, but you could not add nodes. NiFi scales by adding processors and clustering; Spark scales by adding executors across NodeManagers. There was also no native path to *streaming*, every change to source data had to wait for the next package run.
 2. **Once-a-day execution.** Anything that happened during the day was invisible to the warehouse until the next morning. Modern downstream consumers (operational dashboards, near-real-time integrations) couldn't be served at all.
-3. **Narrow connector ecosystem.** The customer's roadmap explicitly required direct writes to **MinIO**, **Kafka** publish/consume, heavy **text/file manipulation**, and live ingestion over **UDP and TCP** sockets, all native NiFi processors, all custom Script Component territory in SSIS.
+3. **Narrow connector ecosystem.** The full project roadmap explicitly requires direct writes to **MinIO**, **Kafka** publish/consume, heavy **text/file manipulation**, and live ingestion over **TCP** sockets, all native NiFi processors, all custom Script Component territory in SSIS.
 4. **Transformation engine couldn't keep up.** Some transformations were fundamentally too heavy for SQL-on-SQL-Server. They needed a real distributed compute engine, **Spark**.
 
 The redesign keeps business semantics identical but moves every stage onto modern, horizontally parallel primitives:
@@ -74,12 +74,11 @@ The redesign keeps business semantics identical but moves every stage onto moder
 
 ## Architecture
 
-Two trust zones, one logical pipeline:
+ 
 
 - **Edge server**, outside the cluster network, close to the source MySQL. Runs only **MiNiFi** (Java), managed remotely by **Cloudera Edge Flow Manager (CEFM)**. Holds source-DB credentials. Holds CSV recovery snapshots maintained by a cron task.
 - **Cluster network**, runs everything else: **2-node NiFi cluster**, **staging MySQL**, **3-node MinIO** (distributed), Spark, and **Airflow**. None of the components in this zone ever learn the source database's hostname or credentials.
 
-**Two execution rhythms:**
 
 - **MiNiFi runs continuously**, picking up new rows the moment they appear in the source MySQL, the streaming layer.
 - **Airflow + Spark run daily**, snapshotting whatever NiFi has accumulated into staging and producing the day's Bronze + Gold outputs, the analytical layer. After each run, a monitoring DAG automatically audits the Gold layer.
@@ -89,16 +88,14 @@ Two trust zones, one logical pipeline:
 
 ## Data scale
 The repository ships with a **sample dataset** sized to be reproducible on modest hardware. Real production volume is **~100x**.
-| Table | Sample rows | Spark partition column |
-|---|---:|---|
-| `wages`                 | 6,000,030  | `Social_Security_Number` |
-| `individual_info`       | 4,398,818  | `Birth_Date` |
-| `insured_information`   | 2,000,000  | `Social_Security_Number` |
-| `insured_transaction`   | 1,000,000  | `Social_Security_Number` |
-| `insured_wage`          | 1,000,000  | `Social_Security_Number` |
-| **Total**                   | **~14.4 M**| |
-
-
+| Table | Sample rows |
+|---|---:|
+| `wages` | 6,000,030 |
+| `individual_info` | 4,398,818 |
+| `insured_information` | 2,000,000 |
+| `insured_transaction` | 1,000,000 |
+| `insured_wage` | 1,000,000 |
+| **Total** | **~14.4 M** |
 ---
 
 ## End-to-end data flow
@@ -108,7 +105,7 @@ The repository ships with a **sample dataset** sized to be reproducible on modes
 3. **Site-to-Site over HTTP** ships the resulting flowfiles from the edge to the central NiFi cluster's Input Port. S2S handles back-pressure, retry, and resumable transfer natively.
 4. **Central NiFi** routes from the Input Port through `UpdateRecord` (which stamps `load_date = ${now():format('yyyy-MM-dd HH:mm:ss')}`) and `PutDatabaseRecord` into the staging MySQL (`datasource` database).
 5. **Airflow** fires daily and runs the `dwh_pipeline` DAG, which `spark-submit`s the PySpark job.
-6. **Spark** discovers numeric bounds per table (`SELECT MIN/MAX(partition_col)`), performs a **15-way parallel JDBC read** with cursor-based fetching, lands the raw frame in the **Bronze** bucket as Parquet, applies type casts and business rules, and writes the curated result as **Gold** Iceberg tables.
+6. **Spark** discovers numeric bounds per table (`SELECT MIN/MAX(partition_col)`), performs a  JDBC read, lands the raw frame in the **Bronze** bucket as Parquet, applies type casts and business rules, and writes the curated result as **Gold** Iceberg tables.
 7. Upon Spark completion, `dwh_pipeline` triggers the **`monitoring_dag`**, which queries the Gold bucket size on MinIO and inserts an audit record into the `gold_bucket_monitoring` MySQL table.
 
 ---
@@ -163,7 +160,7 @@ QueryDatabaseTableRecord (per source table)
 Remote Process Group -> <central-nifi-host>:S2S Input Port
 ```
 
-One `QueryDatabaseTableRecord` instance per source table. The processor tracks the watermark of `message_num` in its persistent state, so each cycle picks up only rows with `message_num > last_seen`. No external state store needed; it's handled by MiNiFi's local state.
+One `QueryDatabaseTableRecord` instance per source table. The processor tracks the watermark of `message_num` in its persistent state, so each cycle picks up only rows with `row_id > last_seen`. No external state store needed; it's handled by MiNiFi's local state.
 
 **(2) Fallback, disaster recovery from CSV snapshots**
 
