@@ -24,7 +24,7 @@
 
 
 
-CREATE TABLE `Individual_info` (
+CREATE TABLE `individual_information` (
   `National_Number` varchar(10) NOT NULL,
   `First_Name` varchar(30) DEFAULT NULL,
   `Second_Name` varchar(20) DEFAULT NULL,
@@ -81,3 +81,13 @@ CREATE TABLE `insured_wage` (
   `Load_Date` datetime DEFAULT NULL,
   `message_num` int DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+CREATE TABLE `gold_bucket_monitoring` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `bucket_name` varchar(255) NOT NULL,
+  `creation_date` datetime NOT NULL,
+  `size_mb` decimal(15,2) NOT NULL,
+  `monitoring_date` datetime NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
