@@ -40,6 +40,10 @@ spark = SparkSession.builder.appName("DWH_Pipeline") \
 
 
 
+def safe_long(c):
+    return when(trim(col(c)) == "", None).otherwise(col(c)).cast("long")
+def safe_int(c):
+    return when(trim(col(c)) == "", None).otherwise(col(c)).cast("int")
 
 
 def read_table(table, partition_col, partitions_num):
@@ -94,3 +98,46 @@ def write_objects(destination, bucket, entity, df, table):
     else:
         raise ValueError(f"Unknown destination '{destination}'. Expected 'staging' or 'dwh'.")
     return df
+
+
+
+def natNumber_filter(table):
+    return Individual_info_stg[['National_Number']].join(table, "National_Number", "inner")
+
+
+
+wages                        = read_table(table="wages",              partition_col="Social_Security_Number", partitions_num=25)
+insured_transaction          = read_table(table="insured_transaction",   partition_col="Social_Security_Number", partitions_num=20)
+insured_information          = read_table(table="insured_information",         partition_col="Social_Security_Number", partitions_num=20)
+insured_wage                 = read_table(table="insured_wage",         partition_col="Social_Security_Number", partitions_num=20)
+individual_information              = read_table(table="individual_info",         partition_col="Birth_Date",             partitions_num=30)
+
+
+individual_info_df = individual_information \
+    .withColumn("National_Number",        safe_long("National_Number")) \
+    .withColumn("Gender",                 safe_int("Gender")) \
+    .withColumn("Religion_Code",          safe_int("Religion_Code")) \
+    .withColumn("Social_Status_Code",     safe_int("Social_Status_Code")) \
+    .withColumn("Birth_Country_Code",     safe_int("Birth_Country_Code")) \
+    .withColumn("Birth_Governorate_Code", safe_int("Birth_Governorate_Code")) \
+    .withColumn("Birth_Kada_Code",        safe_long("Birth_Kada_Code")) \
+    .withColumn("Birth_Liwa_Code",        safe_long("Birth_Liwa_Code")) \
+    .withColumn("Father_National_Number", safe_long("Father_National_Number")) \
+    .withColumn("Mother_National_Number", safe_long("Mother_National_Number"))
+
+insured_info_df = individual_info_df \
+    .withColumn("National_Number", safe_long("National_Number"))
+
+salaries_df = wages \
+    .withColumn("National_Number", safe_long("National_Number"))
+
+insured_yearly_salary_df = insured_wage \
+    .withColumn("Social_Security_Number", safe_long("Social_Security_Number"))
+
+insured_transaction_df = insured_transaction \
+    .withColumn("Social_Security_Number", safe_long("Social_Security_Number"))
+
+
+
+
+Individual_info_stg     = write_objects('staging', bucket='gov.data', entity='cspd', df=individual_info_df,  table="individual_info")
