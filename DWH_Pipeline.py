@@ -140,11 +140,11 @@ insured_transaction_df = insured_transaction \
 
 
 
-Individual_info_stg     = write_objects('staging', bucket='gov.data', entity='insurance', df=individual_info_df,  table="individual_info")
-insured_info_stg          = write_objects('staging', bucket='gov.data', entity='insurance',  df=insured_info_df,          table="insured_info")
-wages_stg              = write_objects('staging', bucket='gov.data', entity='wages',  df=wages_df,              table="wages")
-insured_wage_stg        = write_objects('staging', bucket='gov.data', entity='wages',  df=insured_wage_df, table="insured_wage")
-insured_transaction_stg   = write_objects('staging', bucket='gov.data', entity='wages',  df=insured_transaction_df,   table="insured_transaction")
+Individual_info_stg     = write_objects('staging', bucket='dest.data', entity='insurance', df=individual_info_df,  table="individual_info")
+insured_info_stg          = write_objects('staging', bucket='dest.data', entity='insurance',  df=insured_info_df,          table="insured_info")
+wages_stg              = write_objects('staging', bucket='dest.data', entity='wages',  df=wages_df,              table="wages")
+insured_wage_stg        = write_objects('staging', bucket='dest.data', entity='wages',  df=insured_wage_df, table="insured_wage")
+insured_transaction_stg   = write_objects('staging', bucket='dest.data', entity='wages',  df=insured_transaction_df,   table="insured_transaction")
 
 
 
@@ -164,3 +164,13 @@ Individual_info_dip = spark.sql("""
 dim_country       = spark.sql("SELECT DISTINCT Birth_Country_Code, Birth_Country FROM Individual_info_stg")
 Individual_info_dip = Individual_info_dip.drop('Birth_Country')
 
+
+
+# ────────────────── DWH writes ─────────────────────────────────────────
+
+Individual_info_dwh         = write_objects('dwh', bucket='dest.data.gold', entity='insurance',      df=Individual_info_dip,        table="individual_information")
+insured_info_dwh          = write_objects('dwh', bucket='dest.data.gold', entity='insurance',        df=insured_info_nat,          table="insured_information")
+salaries_dwh              = write_objects('dwh', bucket='dest.data.gold', entity='wages',        df=wages_stg_nat,          table="salaries")
+insured_yearly_salary_dwh = write_objects('dwh', bucket='dest.data.gold', entity='wages',        df=insured_wage_stg,           table="insured_wage")
+insured_transaction_dwh   = write_objects('dwh', bucket='dest.data.gold', entity='wages',        df=insured_transaction_stg,   table="insured_transaction")
+dim_country_dwh           = write_objects('dwh', bucket='dest.data.gold', entity='dimensions', df=dim_country,               table="dim_country")
