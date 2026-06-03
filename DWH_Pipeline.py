@@ -20,7 +20,8 @@ MYSQL_URL       = os.getenv("MYSQL_URL")
 spark = SparkSession.builder.appName("DWH_Pipeline") \
     .config("spark.jars", "/home/yazan/mysql-connector-j-9.5.0.jar") \
     .config("spark.jars.packages",
-            "org.apache.hadoop:hadoop-aws:3.4.1,") \
+            "org.apache.hadoop:hadoop-aws:3.4.1,"
+            "org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.10.1") \
     .config("spark.driver.extraClassPath", "/home/yazan/mysql-connector-j-9.5.0.jar") \
     .config("spark.hadoop.fs.s3a.access.key", MINIO_ACCESS) \
     .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET) \
@@ -28,6 +29,10 @@ spark = SparkSession.builder.appName("DWH_Pipeline") \
     .config("spark.hadoop.fs.s3a.path.style.access", "true") \
     .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
     .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
+    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \
+    .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog") \
+    .config("spark.sql.catalog.iceberg.type", "hadoop") \
+    .config("spark.sql.catalog.iceberg.warehouse", "s3a://dest.data.gold/") \
     .config("spark.sql.optimizer.excludedRules", "org.apache.spark.sql.catalyst.optimizer.SimplifyCasts") \
     .config("spark.hadoop.fs.s3a.buffer.dir", "/tmp/s3a") \
     .getOrCreate()
