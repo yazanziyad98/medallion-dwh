@@ -20,7 +20,7 @@ A two-tier **medallion data warehouse** with **edge-to-core streaming ingestion*
 
 **Apache MiNiFi** runs on an edge server outside the cluster network, continuously pulling citizen-level records from the operational MySQL via `QueryDatabaseTableRecord` (keyed on an incremental `row_id` column) and shipping the result to a 2-node **central NiFi cluster** via **Site-to-Site over HTTP**. A built-in **disaster-recovery sub-flow** falls back to CSV snapshots on the edge server when the source database is unreachable. Central NiFi stamps a `load_date` lineage column and lands the records in a staging MySQL.
 
-A daily **Airflow** DAG triggers a **PySpark job** (Spark 4.0, local mode). The job performs 15-way parallel partitioned JDBC reads against staging, lands the raw frame as **Bronze (Parquet)** on a 3-node distributed **MinIO** cluster, applies type coercion, cross-system joins, dimensional modeling, and business rules, then writes the curated output as **Gold (Apache Iceberg)** tables. Upon completion, the pipeline automatically triggers a **monitoring DAG** that audits the Gold layer size and logs a snapshot to MySQL.
+A daily **Airflow** DAG triggers a **PySpark job** (Spark 4.0). The job performs partitioned JDBC reads against staging, lands the raw frame as **Bronze (Parquet)** on a 3-node distributed **MinIO** cluster, applies type coercion, cross-system joins, dimensional modeling, and business rules, then writes the curated output as **Gold (Apache Iceberg)** tables. Upon completion, the pipeline automatically triggers a **monitoring DAG** that audits the Gold layer size and logs a snapshot to MySQL.
 
 The whole stack replaces a legacy **SQL Server + SSIS** ETL that was single-speed, batch-only, and tightly coupled to a SQL transformation engine. The new design parallelizes work at **every** layer, runs continuously instead of nightly, decouples compute from storage, and keeps source-DB credentials and IPs entirely off the central NiFi cluster.
 
@@ -122,7 +122,7 @@ The repository ships with a **sample dataset** sized to be reproducible on modes
 | **Edge orchestration** | Cloudera Edge Flow Manager (CEFM) | Centralized configuration, version, and deploy management for the edge agent |
 | **Central routing** | Apache NiFi (2-node cluster) | Receives via Input Port; stamps `load_date`; writes to staging MySQL |
 | **Staging DB** | MySQL 8 (`datasource`) | Allows Spark to process it at full parallelism without affecting the operational source |
-| **Compute** | PySpark 4.0 (local mode) | Distributed transformation; Iceberg and hadoop-aws loaded via `--packages` |
+| **Compute** | PySpark 4.0 | Distributed transformation; Iceberg and hadoop-aws loaded via `--packages` |
 | **Bronze storage** | MinIO (3-node distributed) + Parquet | S3-compatible, erasure-coded |
 | **Gold storage** | MinIO + Apache Iceberg | ACID, time travel, schema/partition evolution |
 | **Orchestration** | Apache Airflow 3.0.6 | Daily scheduling, DAG chaining, log centralization |
@@ -224,7 +224,7 @@ The 2-node cluster runs in active-active mode; either node can serve the Input P
 
 ## The Spark transformation layer
 
-The full job lives in `scripts/DWH_Pipeline.py`. Spark 4.0 is used in local mode; `--packages` pulls in the Iceberg runtime and hadoop-aws at submit time so no manual jar management is needed.
+The full job lives in `scripts/DWH_Pipeline.py`. Spark 4.0 is used; `--packages` pulls in the Iceberg runtime and hadoop-aws at submit time so no manual jar management is needed.
 
 ### 1. Dynamic bounds discovery + parallel JDBC read
 
