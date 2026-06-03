@@ -1,4 +1,4 @@
- 
+# Data Warehouse Pipeline
 
 > Migration of a legacy **SQL Server + SSIS** ETL into a horizontally scalable lakehouse architecture. Continuous edge ingestion via **MiNiFi** feeds a **NiFi** cluster; **PySpark** transforms staged data into a **Parquet Bronze** and **Iceberg Gold** layer on **MinIO**, orchestrated by **Apache Airflow**.
 
@@ -9,18 +9,18 @@
 ![Airflow](https://img.shields.io/badge/Airflow-3.0.6-017CEE?logo=apacheairflow&logoColor=white)
 ![Iceberg](https://img.shields.io/badge/Iceberg-Hadoop_Catalog-4FC3F7?logo=apache&logoColor=white)
 ![MinIO](https://img.shields.io/badge/MinIO-distributed_3_nodes-C72E49?logo=minio&logoColor=white)
-![RHEL](https://img.shields.io/badge/RHEL-9.5-EE0000?logo=redhat&logoColor=white)
+
 
 
 ---
- 
+
 ## Overview
 
 A two-tier **medallion data warehouse** with **edge-to-core streaming ingestion** at the source side and **distributed batch transformation** at the analytical side.
 
-**Apache MiNiFi** runs on an edge server outside the cluster network, continuously pulling citizen-level records from the operational MySQL via `QueryDatabaseTableRecord` (keyed on an incremental `row_id` column) and shipping the result to a 2-node **central NiFi cluster** via **Site-to-Site over HTTP**. A built-in **disaster-recovery sub-flow** falls back to CSV snapshots on the edge server when the source database is unreachable. Central NiFi stamps a `load_date` lineage column and lands the records in a staging MySQL.
+**Apache MiNiFi** runs on an edge server outside the cluster network, continuously pulling citizen-level records from the operational MySQL via `QueryDatabaseTableRecord` (keyed on an incremental `message_num` column) and shipping the result to a 2-node **central NiFi cluster** via **Site-to-Site over HTTP**. A built-in **disaster-recovery sub-flow** falls back to CSV snapshots on the edge server when the source database is unreachable. Central NiFi stamps a `load_date` lineage column and lands the records in a staging MySQL.
 
-A daily **Airflow** DAG triggers a **PySpark job** (Spark 4.0). The job performs partitioned JDBC reads against staging, lands the raw frame as **Bronze (Parquet)** on a 3-node distributed **MinIO** cluster, applies type coercion, cross-system joins, dimensional modeling, and business rules, then writes the curated output as **Gold (Apache Iceberg)** tables. Upon completion, the pipeline automatically triggers a **monitoring DAG** that audits the Gold layer size and logs a snapshot to MySQL.
+A daily **Airflow** DAG triggers a **PySpark job** (Spark 4.0, local mode). The job performs partitioned JDBC reads against staging, lands the raw frame as **Bronze (Parquet)** on a 3-node distributed **MinIO** cluster, applies type coercion, cross-system joins, dimensional modeling, and business rules, then writes the curated output as **Gold (Apache Iceberg)** tables. Upon completion, the pipeline automatically triggers a **monitoring DAG** that audits the Gold layer size and logs a snapshot to MySQL.
 
 The whole stack replaces a legacy **SQL Server + SSIS** ETL that was single-speed, batch-only, and tightly coupled to a SQL transformation engine. The new design parallelizes work at **every** layer, runs continuously instead of nightly, decouples compute from storage, and keeps source-DB credentials and IPs entirely off the central NiFi cluster.
 
@@ -42,27 +42,26 @@ Sample dataset: **~14.4 million rows** across five tables. Real production scale
 10. [Storage layer: MinIO + Iceberg](#storage-layer-minio--iceberg)
 11. [Orchestration: Airflow](#orchestration-airflow)
 12. [Gold layer monitoring](#gold-layer-monitoring)
-13. [Operational notes](#operational-notes)
-14. [Setup](#setup)
-15. [Schema, partitioning, and derived columns](#schema-partitioning-and-derived-columns)
-16. [Roadmap](#roadmap)
+13. [Setup](#setup)
+14. [Schema, partitioning, and derived columns](#schema-partitioning-and-derived-columns)
+ 
 
 ---
 
 ## Why this project exists
 
-The legacy stack **SQL Server + SSIS** worked for years, but as the need evolved past nightly batch reporting, four specific limitations dominated:
+The legacy stack was **SQL Server + SSIS**. It worked for years, but as the need evolved past nightly batch reporting, four specific limitations dominated:
 
 1. **One speed, one machine.** SSIS executed packages at a fixed throughput ceiling with no horizontal scaling path. You could tune buffer sizes and upgrade the host, but you could not add nodes. NiFi scales by adding processors and clustering; Spark scales by adding executors across NodeManagers. There was also no native path to *streaming*, every change to source data had to wait for the next package run.
 2. **Once-a-day execution.** Anything that happened during the day was invisible to the warehouse until the next morning. Modern downstream consumers (operational dashboards, near-real-time integrations) couldn't be served at all.
-3. **Narrow connector ecosystem.** The full project roadmap explicitly requires direct writes to **MinIO**, **Kafka** publish/consume, heavy **text/file manipulation**, and live ingestion over **TCP** sockets, all native NiFi processors, all custom Script Component territory in SSIS.
+3. **Narrow connector ecosystem.** The customer's roadmap explicitly required direct writes to **MinIO**, **Kafka** publish/consume, heavy **text/file manipulation**, and live ingestion over **UDP and TCP** sockets, all native NiFi processors, all custom Script Component territory in SSIS.
 4. **Transformation engine couldn't keep up.** Some transformations were fundamentally too heavy for SQL-on-SQL-Server. They needed a real distributed compute engine, **Spark**.
 
 The redesign keeps business semantics identical but moves every stage onto modern, horizontally parallel primitives:
 
 | Old (SSIS / SQL Server)                               | New (MiNiFi -> NiFi -> Spark -> Iceberg / MinIO)                          |
 |---|---|
-| Single-threaded "one speed" execution                  | Continuous edge capture + 15-way parallel Spark JDBC reads              |
+| Single-threaded "one speed" execution                  | Continuous edge capture + parallel Spark JDBC reads              |
 | Once-nightly batch run                                 | MiNiFi runs 24/7; Airflow triggers Spark daily for transformation       |
 | OLE DB / file / SQL Server connectors only             | NiFi processors for MinIO, Kafka, UDP, TCP, files, text manipulation    |
 | Mainly SQL-only transformation engine in SSIS Data Flow       | PySpark for heavy transformations; Iceberg for ACID/evolution   |
@@ -74,11 +73,12 @@ The redesign keeps business semantics identical but moves every stage onto moder
 
 ## Architecture
 
- 
+Two trust zones, one logical pipeline:
 
 - **Edge server**, outside the cluster network, close to the source MySQL. Runs only **MiNiFi** (Java), managed remotely by **Cloudera Edge Flow Manager (CEFM)**. Holds source-DB credentials. Holds CSV recovery snapshots maintained by a cron task.
 - **Cluster network**, runs everything else: **2-node NiFi cluster**, **staging MySQL**, **3-node MinIO** (distributed), Spark, and **Airflow**. None of the components in this zone ever learn the source database's hostname or credentials.
 
+**Two execution rhythms:**
 
 - **MiNiFi runs continuously**, picking up new rows the moment they appear in the source MySQL, the streaming layer.
 - **Airflow + Spark run daily**, snapshotting whatever NiFi has accumulated into staging and producing the day's Bronze + Gold outputs, the analytical layer. After each run, a monitoring DAG automatically audits the Gold layer.
@@ -88,14 +88,16 @@ The redesign keeps business semantics identical but moves every stage onto moder
 
 ## Data scale
 The repository ships with a **sample dataset** sized to be reproducible on modest hardware. Real production volume is **~100x**.
-| Table | Sample rows |
-|---|---:|
-| `wages` | 6,000,030 |
-| `individual_info` | 4,398,818 |
-| `insured_information` | 2,000,000 |
-| `insured_transaction` | 1,000,000 |
-| `insured_wage` | 1,000,000 |
-| **Total** | **~14.4 M** |
+| Table | Sample rows | Spark partition column |
+|---|---:|---|
+| `wages`               | 6,000,030  | `SSN`        |
+| `individual_info`     | 4,398,818  | `Birth_Date` |
+| `insured_information` | 2,000,000  | `SSN`        |
+| `insured_transaction` | 1,000,000  | `SSN`        |
+| `insured_wage`        | 1,000,000  | `SSN`        |
+| **Total**             | **~14.4 M**| |
+
+
 ---
 
 ## End-to-end data flow
@@ -105,7 +107,7 @@ The repository ships with a **sample dataset** sized to be reproducible on modes
 3. **Site-to-Site over HTTP** ships the resulting flowfiles from the edge to the central NiFi cluster's Input Port. S2S handles back-pressure, retry, and resumable transfer natively.
 4. **Central NiFi** routes from the Input Port through `UpdateRecord` (which stamps `load_date = ${now():format('yyyy-MM-dd HH:mm:ss')}`) and `PutDatabaseRecord` into the staging MySQL (`datasource` database).
 5. **Airflow** fires daily and runs the `dwh_pipeline` DAG, which `spark-submit`s the PySpark job.
-6. **Spark** discovers numeric bounds per table (`SELECT MIN/MAX(partition_col)`), performs a  JDBC read, lands the raw frame in the **Bronze** bucket as Parquet, applies type casts and business rules, and writes the curated result as **Gold** Iceberg tables.
+6. **Spark** discovers numeric bounds per table (`SELECT MIN/MAX(partition_col)`), performs parallel JDBC reads with cursor-based fetching, lands the raw frame in the **Bronze** bucket as Parquet, applies type casts and business rules, and writes the curated result as **Gold** Iceberg tables.
 7. Upon Spark completion, `dwh_pipeline` triggers the **`monitoring_dag`**, which queries the Gold bucket size on MinIO and inserts an audit record into the `gold_bucket_monitoring` MySQL table.
 
 ---
@@ -119,12 +121,12 @@ The repository ships with a **sample dataset** sized to be reproducible on modes
 | **Edge orchestration** | Cloudera Edge Flow Manager (CEFM) | Centralized configuration, version, and deploy management for the edge agent |
 | **Central routing** | Apache NiFi (2-node cluster) | Receives via Input Port; stamps `load_date`; writes to staging MySQL |
 | **Staging DB** | MySQL 8 (`datasource`) | Allows Spark to process it at full parallelism without affecting the operational source |
-| **Compute** | PySpark 4.0 | Distributed transformation; Iceberg and hadoop-aws loaded via `--packages` |
+| **Compute** | PySpark 4.0 (local mode) | Distributed transformation; Iceberg and hadoop-aws loaded via `--packages` |
 | **Bronze storage** | MinIO (3-node distributed) + Parquet | S3-compatible, erasure-coded |
 | **Gold storage** | MinIO + Apache Iceberg | ACID, time travel, schema/partition evolution |
 | **Orchestration** | Apache Airflow 3.0.6 | Daily scheduling, DAG chaining, log centralization |
 | **Monitoring** | Python + MinIO client + MySQL | Post-run Gold layer size audit logged to `gold_bucket_monitoring` |
-| **Runtime** | RHEL 9.5, Java 21 OpenJDK, Python 3.9.21 | Server-grade Linux |
+| **Runtime** | Java 21 OpenJDK, Python 3.12 | |
 
 ---
 
@@ -160,7 +162,7 @@ QueryDatabaseTableRecord (per source table)
 Remote Process Group -> <central-nifi-host>:S2S Input Port
 ```
 
-One `QueryDatabaseTableRecord` instance per source table. The processor tracks the watermark of `message_num` in its persistent state, so each cycle picks up only rows with `row_id > last_seen`. No external state store needed; it's handled by MiNiFi's local state.
+One `QueryDatabaseTableRecord` instance per source table. The processor tracks the watermark of `message_num` in its persistent state, so each cycle picks up only rows with `message_num > last_seen`. No external state store needed; it's handled by MiNiFi's local state.
 
 **(2) Fallback, disaster recovery from CSV snapshots**
 
@@ -221,38 +223,44 @@ The 2-node cluster runs in active-active mode; either node can serve the Input P
 
 ## The Spark transformation layer
 
-The full job lives in `scripts/DWH_Pipeline.py`. Spark 4.0 is used; `--packages` pulls in the Iceberg runtime and hadoop-aws at submit time so no manual jar management is needed.
+The full job lives in `scripts/DWH_Pipeline.py`. Spark 4.0 is used in local mode; `--packages` pulls in the Iceberg runtime and hadoop-aws at submit time so no manual jar management is needed.
 
 ### 1. Dynamic bounds discovery + parallel JDBC read
 
 ```python
-url = "jdbc:mysql://localhost:3306/datasource?useCursorFetch=true"
-
-bound = spark.read.format("jdbc") \
-    .option("url", url) \
-    .option("dbtable",
-        f"(SELECT MIN({partition_col}) AS low_bound, "
-        f"        MAX({partition_col}) AS up_bound "
-        f"   FROM datasource.{table}) AS tbl") \
+bound = spark.read \
+    .format("jdbc") \
+    .option("driver", "com.mysql.cj.jdbc.Driver") \
+    .option("url", MYSQL_URL) \
     .option("fetchsize", "5000") \
+    .option("dbtable", f"""(SELECT min({partition_col}) low_bound,
+                            max({partition_col}) as up_bound
+                    FROM datasource.{table}) as tbl""") \
+    .option("user", MYSQL_USER) \
+    .option("password", MYSQL_PASSWORD) \
     .load().collect()[0]
 
 if bound[0] is None or bound[1] is None:
-    raise ValueError(f"Table '{table}' is empty. "
-                     f"MIN/MAX on '{partition_col}' returned NULL.")
+    raise ValueError(f"Table '{table}' appears to be empty — "
+                     f"MIN/MAX on '{partition_col}' returned NULL. "
+                     f"Aborting to avoid a full-scan read.")
 
-df = spark.read.format("jdbc") \
-    .option("url", url) \
+df = spark.read \
+    .format("jdbc") \
+    .option("driver", "com.mysql.cj.jdbc.Driver") \
+    .option("url", MYSQL_URL) \
     .option("dbtable", table) \
+    .option("user", MYSQL_USER) \
+    .option("password", MYSQL_PASSWORD) \
     .option("partitionColumn", partition_col) \
     .option("lowerBound", bound[0]) \
     .option("upperBound", bound[1]) \
-    .option("numPartitions", 15) \
+    .option("numPartitions", partitions_num) \
     .option("fetchsize", "5000") \
     .load()
 ```
 
-Instead of hardcoding bounds (which goes stale the moment rows are added), the job **discovers them at runtime** with a cheap MIN/MAX query, then issues 15 concurrent `WHERE partition_col BETWEEN x AND y` queries against MySQL. The null guard catches empty tables before they produce a confusing JVM error. Cursor-based fetch (`useCursorFetch=true` + `fetchsize=5000`) keeps the JDBC driver from materializing entire result sets in memory.
+Instead of hardcoding bounds (which goes stale the moment rows are added), the job **discovers them at runtime** with a cheap MIN/MAX query, then issues concurrent `WHERE partition_col BETWEEN x AND y` queries against MySQL, with the partition count tuned per table. The null guard catches empty tables before they produce a confusing JVM error. Cursor-based fetch (`fetchsize=5000`) keeps the JDBC driver from materializing entire result sets in memory.
 
 
 ### 2. Automatic type conversion
@@ -365,7 +373,7 @@ The pipeline is split across two DAGs.
 
 ### `dwh_pipeline`
 
-Runs daily at **16:43 UTC** via cron (`43 16 * * *`). Uses the Airflow 3 `@dag` decorator style and `airflow.providers.standard` imports.
+Runs `@daily`. Uses the Airflow 3 `@dag` decorator style and `airflow.providers.standard` imports.
 
 ```python
 from airflow.decorators import dag
@@ -376,7 +384,7 @@ from datetime import datetime
 @dag(
     dag_id="dwh_pipeline",
     start_date=datetime(2026, 6, 1),
-    schedule="43 16 * * *",
+    schedule="@daily",
     catchup=False,
     tags=["dwh", "spark"],
 )
@@ -385,10 +393,7 @@ def dwh_pipeline():
         task_id="run_spark_pipeline",
         bash_command="""
             /mnt/c/Users/yazan/Downloads/spark-4.0.0-bin-hadoop3/spark-4.0.0-bin-hadoop3/bin/spark-submit \
-                --driver-memory 3g \
-                --conf spark.eventLog.enabled=false \
-                --conf spark.hadoop.fs.s3a.committer.name=directory \
-                --conf spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version=2 \
+                --driver-memory 16g \
                 --packages org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.10.1,org.apache.hadoop:hadoop-aws:3.4.1 \
                 /home/yazan/airflow/scripts/DWH_Pipeline.py
         """,
@@ -467,28 +472,18 @@ dwh_pipeline (Spark job)
                                     ├── Query MinIO gold bucket size
                                     └── INSERT into gold_bucket_monitoring (MySQL)
 ```
-
----
-
-## Operational notes
-
-A few configuration details worth flagging for anyone reproducing or operating the pipeline:
-
-**JDBC at scale.** MySQL Connector defaults to materializing the entire result set in the driver heap before yielding the first row. At hundreds of millions of rows, that OOMs the Spark driver in seconds. The fix is two-fold: set `useCursorFetch=true` in the JDBC URL and `fetchsize=5000` on every Spark read.
-
-**MinIO endpoint in monitoring.** The MinIO endpoint used by the monitoring script (`172.24.208.1:9005`) is currently hardcoded in `monitor_gold_layer.py` while credentials come from `.env`. For consistency, the endpoint should be moved to the `.env` file as well.
-
+ 
 ---
 
 ## Setup
 
 ```bash
 # Java 21
-export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-21.0.7.0.6-1.el9.x86_64
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk
 export PATH=$JAVA_HOME/bin:$PATH
 
 # Python venv for Airflow
-python3.9 -m venv ~/airflow_venv
+python3.12 -m venv ~/airflow_venv
 source ~/airflow_venv/bin/activate
 pip install apache-airflow==3.0.6
 
@@ -512,20 +507,21 @@ cp airflow/scripts/monitor_gold_layer.py ~/airflow/scripts/
 
 ### Environment variables (`.env`)
 
-The monitoring script reads the following from a `.env` file:
+Both the Spark job and the monitoring script read credentials from a `.env` file:
 
 ```
 MINIO_ACCESS=<access_key>
 MINIO_SECRET=<secret_key>
-MINIO_ENDPOINT=<host:port>
-MYSQL_HOST=<host>
+MINIO_ENDPOINT=<http://host:port>
 MYSQL_USER=<user>
 MYSQL_PASSWORD=<password>
+MYSQL_HOST=<host>
+MYSQL_URL=jdbc:mysql://<host>:<port>/<database>?useCursorFetch=true
 ```
 
 ### Daily run (Airflow-managed)
 
-The `dwh_pipeline` DAG is scheduled at `43 16 * * *`. Manual trigger:
+The `dwh_pipeline` DAG is scheduled `@daily`. Manual trigger:
 
 ```bash
 source ~/airflow_venv/bin/activate
@@ -564,17 +560,4 @@ Iceberg's hierarchical namespace mirrors the Bronze path. Backticks are needed b
 
 ---
 
-## Roadmap
-
-| # | Item | Rationale |
-|---|---|---|
-| 1 | **Iceberg merge-on-read CDC** | Gold is currently `createOrReplace` per day. Switch to `MERGE INTO` with `load_date` as the high-water mark for true incremental Gold. |
-| 2 | **Iceberg partition evolution** | Once query patterns stabilize, evolve partitioning (e.g., by `Birth_Country_Code`) without rewriting historical data. |
-| 3 | **Postgres for Airflow metadata** | SQLite is fine for one DAG; move to PostgreSQL when concurrency grows. |
-| 4 | **TLS on Site-to-Site** | Currently HTTP. Move to HTTPS S2S with mutual TLS once cert lifecycle tooling is in place. |
-| 5 | **Data quality gates** | Great Expectations or Soda checks between Bronze and Gold (row counts, null rates, referential integrity on `National_Number`). |
-| 6 | **REST Iceberg catalog** | Swap Hadoop-type catalog for a REST catalog (Nessie, Polaris) to support multiple writers and external query engines (Trino, DuckDB). |
-| 7 | **MiNiFi clustering / failover** | Single edge MiNiFi today. Cold-standby on a second edge box would close the last remaining single-point-of-failure. |
-| 8 | **Kafka and UDP/TCP ingestion paths** | Wire the connector capabilities the platform was chosen for: real-time event streams from operational systems. |
-| 9 | **Column-level lineage** | OpenLineage emitter on the Spark job, Marquez, end-to-end column lineage from source through Iceberg. |
-| 10 | **Monitoring enhancements** | Move hardcoded MinIO endpoint in `monitor_gold_layer.py` to `.env`; add alerting on anomalous size changes between runs. |
+ 

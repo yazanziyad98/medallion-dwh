@@ -120,7 +120,6 @@ individual_info_df = individual_information \
     .withColumn("Social_Status_Code",     safe_int("Social_Status_Code")) \
     .withColumn("Birth_Country_Code",     safe_int("Birth_Country_Code")) \
     .withColumn("Birth_Governorate_Code", safe_int("Birth_Governorate_Code")) \
-    .withColumn("Birth_Kada_Code",        safe_long("Birth_Kada_Code")) \
     .withColumn("Birth_Liwa_Code",        safe_long("Birth_Liwa_Code")) \
     .withColumn("Father_National_Number", safe_long("Father_National_Number")) \
     .withColumn("Mother_National_Number", safe_long("Mother_National_Number"))
