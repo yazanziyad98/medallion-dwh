@@ -78,8 +78,8 @@ CREATE TABLE `insured_wage` (
   `Start_Date` date NOT NULL,
   `End_Date` date DEFAULT NULL,
   `Wage_Amount` decimal(9,1) DEFAULT NULL,
-  `Load_Date` datetime DEFAULT NULL,
-  `message_num` int DEFAULT '0'
+  `Load_Date` datetime DEFAULT NULL, 
+  `row_id` int DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
