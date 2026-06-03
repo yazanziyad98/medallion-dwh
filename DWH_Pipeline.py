@@ -106,10 +106,10 @@ def natNumber_filter(table):
 
 
 
-wages                        = read_table(table="wages",              partition_col="Social_Security_Number", partitions_num=25)
-insured_transaction          = read_table(table="insured_transaction",   partition_col="Social_Security_Number", partitions_num=20)
-insured_information          = read_table(table="insured_information",         partition_col="Social_Security_Number", partitions_num=20)
-insured_wage                 = read_table(table="insured_wage",         partition_col="Social_Security_Number", partitions_num=20)
+wages                        = read_table(table="wages",              partition_col="SSN", partitions_num=25)
+insured_transaction          = read_table(table="insured_transaction",   partition_col="SSN", partitions_num=20)
+insured_information          = read_table(table="insured_information",         partition_col="SSN", partitions_num=20)
+insured_wage                 = read_table(table="insured_wage",         partition_col="SSN", partitions_num=20)
 individual_information              = read_table(table="individual_info",         partition_col="Birth_Date",             partitions_num=30)
 
 
@@ -132,10 +132,10 @@ wages_df = wages \
     .withColumn("National_Number", safe_long("National_Number"))
 
 insured_wage_df = insured_wage \
-    .withColumn("Social_Security_Number", safe_long("Social_Security_Number"))
+    .withColumn("SSN", safe_long("SSN"))
 
 insured_transaction_df = insured_transaction \
-    .withColumn("Social_Security_Number", safe_long("Social_Security_Number"))
+    .withColumn("SSN", safe_long("SSN"))
 
 
 
