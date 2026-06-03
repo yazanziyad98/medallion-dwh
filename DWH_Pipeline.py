@@ -154,8 +154,13 @@ insured_info_nat  = natNumber_filter(insured_info_stg)
 
 Individual_info_stg.createOrReplaceTempView('Individual_info_stg')
 
-personal_info_dip = spark.sql("""
+Individual_info_dip = spark.sql("""
     SELECT *,
            CASE WHEN Passport_Number LIKE '0000%' THEN 1 ELSE 0 END AS IS_Diplomat
     FROM Individual_info_stg
 """)
+
+
+dim_country       = spark.sql("SELECT DISTINCT Birth_Country_Code, Birth_Country FROM Individual_info_stg")
+Individual_info_dip = Individual_info_dip.drop('Birth_Country')
+
