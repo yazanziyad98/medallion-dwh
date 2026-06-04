@@ -75,7 +75,7 @@ The redesign keeps business semantics identical but moves every stage onto moder
 
 Two trust zones, one logical pipeline:
 
-- **Edge server**, outside the cluster network, close to the source MySQL. Runs only **MiNiFi** (Java), managed remotely by **Cloudera Edge Flow Manager (CEFM)**. Holds source-DB credentials. Holds CSV recovery snapshots maintained by a cron task.
+- **Edge server**, outside the cluster network, close to the source MySQL. Runs only **MiNiFi** (Java), Holds source-DB credentials. Holds CSV recovery snapshots maintained by a cron task.
 - **Cluster network**, runs everything else: **2-node NiFi cluster**, **staging MySQL**, **3-node MinIO** (distributed), Spark, and **Airflow**. None of the components in this zone ever learn the source database's hostname or credentials.
 
 **Two execution rhythms:**
@@ -140,9 +140,6 @@ Two reasons:
 1. **Lightweight footprint.** MiNiFi is designed for edge deployment, minimal heap, It runs comfortably on an edge box that can't justify a full NiFi installation.
 2. **Network isolation.** Source database hostnames, credentials, and JDBC URLs **never leave the edge server**. Central NiFi only ever sees an inbound Site-to-Site connection from the edge; it has no route to, no knowledge of, and no credentials for the operational source. A compromised central NiFi node cannot pivot to the source database, because it doesn't have what it would need.
 
-### Management: Cloudera Edge Flow Manager (CEFM)
-
-The edge agent is configured, versioned, and deployed remotely from **Cloudera Edge Flow Manager**. The MiNiFi instance on the edge pulls its flow definition from CEFM on boot and on demand; flow updates are pushed centrally without SSHing onto the edge box.
 
 ### The two MiNiFi sub-flows
 
