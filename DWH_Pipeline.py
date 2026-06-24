@@ -97,7 +97,7 @@ def write_objects(destination, bucket, entity, df, table):
 
 
 
-def natNumber_filter(table):
+def filter_by_national_number(table):
     return Individual_info_stg[['National_Number']].join(table, "National_Number", "inner")
 
 
@@ -143,8 +143,8 @@ insured_transaction_stg   = write_objects('staging', bucket='dest.data', entity=
 
 
 
-wages_stg_nat  = natNumber_filter(wages_stg)
-insured_info_nat  = natNumber_filter(insured_info_stg)
+wages_stg_nat  = filter_by_national_number(wages_stg)
+insured_info_nat  = filter_by_national_number(insured_info_stg)
 
 
 Individual_info_stg.createOrReplaceTempView('Individual_info_stg')
