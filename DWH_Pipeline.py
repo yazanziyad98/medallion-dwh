@@ -4,7 +4,7 @@ from pyspark.sql.functions import col, when, trim
 from datetime import datetime
 import os
 from dotenv import load_dotenv
-
+from safe_transform import safe_long, safe_int
 
 load_dotenv()
 
@@ -39,11 +39,7 @@ spark = SparkSession.builder.appName("DWH_Pipeline") \
 
 
 
-
-def safe_long(c):
-    return when(trim(col(c)) == "", None).otherwise(col(c)).cast("long")
-def safe_int(c):
-    return when(trim(col(c)) == "", None).otherwise(col(c)).cast("int")
+ 
 
 
 def read_table(table, partition_col, partitions_num):
